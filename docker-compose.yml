@@ -1,0 +1,128 @@
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./nginx/web:/usr/share/nginx/html
+    restart: always
+   # Nuevo servicio para PostgreSQL
+  postgres:
+    image: postgres:13
+    container_name: dacs-db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: dacs_db
+      POSTGRES_USER: dacs_user
+      POSTGRES_PASSWORD: dacs2025
+    volumes:
+      - ./db/postgres:/var/lib/postgresql/data
+    restart: always
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: keycloak-server
+    # Variables de entorno que tenías en docker run
+    volumes:
+      - ./keycloak/theme:/opt/keycloak/providers
+    environment:
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false" 
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: "xforwarded"
+      KEYCLOAK_ADMIN: temp_admin 
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_RUN_IN_CONTAINER: true
+      KC_HTTP_RELATIVE_PATH: auth
+      #KC_HOSTNAME: dacs2025.local # Importante para Nginx/Keycloak
+      #KC_HOSTNAME_URL: https://dacs2025.local/auth
+      #KC_HOSTNAME_ADMIN_URL: https://dacs2025.local/auth
+      # CONFIGURACIÓN AÑADIDA PARA PERSISTENCIA (Usar PostgreSQL)
+      KC_DB: postgres
+      KC_DB_URL_HOST: postgres
+      KC_DB_USERNAME: dacs_user
+      KC_DB_PASSWORD: dacs2025     
+      KC_DB_URL_DATABASE: dacs_db  
+    command: ["start"] # O tu comando de inicio si es diferente
+    # Ya no necesitas mapear el puerto 8080 si solo Nginx lo va a usar,
+    # pero si quieres accederlo desde tu máquina, lo dejas:
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres # Keycloak depende de Postgres
+    restart: always
+  # Nuevo servicio para pgAdmin
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin-server
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: "admin@email.com"
+      PGADMIN_DEFAULT_PASSWORD: "admin"
+    volumes:
+      - ./db/pgadmin:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    restart: always
+  api:
+    build: 
+      context: .      # Contexto de build desde la raíz del proyecto
+      dockerfile: microservicios/bff/Dockerfile
+    container_name: ms-bff
+    environment:
+      KEYCLOAK_ISSUER_URI: https://dacs2025.local/auth/realms/dacs
+      # VAR ENTORNO DONDE ESTA EL MS CONECTOR
+      MS_CONECTOR_URL: http://conector:9002/conector
+      # VAR ENTORNO DONDE ESTA EL MS BACKEND
+      MS_BACKEND_URL: http://backend:9003/backend
+    ports:
+      - "9001:9001"   # Puerto expuesto para acceso directo (opcional)
+    extra_hosts:
+      # Permite que el contenedor resuelva 'dacs2025.local' al host
+      # Necesario para comunicación con servicios externos
+      - "dacs2025.local:host-gateway"
+    command: sh -c "java -jar app.jar"
+    depends_on:
+      - conector
+      - backend
+    restart: always
+  conector:
+    build: 
+      context: .      # Contexto de build desde la raíz del proyecto
+      dockerfile: microservicios/conector/Dockerfile
+    container_name: ms-conector
+    ports:
+      - "9002:9002"   # Puerto expuesto para acceso directo (opcional)
+    extra_hosts:
+      # Permite que el contenedor resuelva 'dacs2025.local' al host
+      # Necesario para comunicación con servicios externos
+      - "dacs2025.local:host-gateway"
+    command: sh -c "java -jar app.jar"
+    restart: always
+  backend:
+    build: 
+      context: .      # Contexto de build desde la raíz del proyecto
+      dockerfile: microservicios/backend/Dockerfile
+    container_name: ms-backend
+    environment:
+    # VAR ENTORNO DONDE ESTA STRIG CONEXION BASE DE DATOS 
+      DACS_DATASOURCE_URL: jdbc:postgresql://postgres:5432/dacs_db?serverTimezone=America/Argentina/Buenos_Aires
+      DACS_DATASOURCE_USER: dacs_user
+      DACS_DATASOURCE_PWD: dacs2025
+    ports:
+      - "9003:9003"   # Puerto expuesto para acceso directo (opcional)
+    extra_hosts:
+      # Permite que el contenedor resuelva 'dacs2025.local' al host
+      # Necesario para comunicación con servicios externos
+      - "dacs2025.local:host-gateway"
+    command: sh -c "java -jar app.jar"
+    depends_on:
+      - postgres
+    restart: always
+
+
+
